@@ -1,4 +1,6 @@
 import sys
+from physics_engine import DronePhysics
+from drone_visualizer import DroneVisualizer
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QDockWidget, 
                              QTableWidget, QTableWidgetItem, QVBoxLayout, 
                              QWidget, QHeaderView, QTextEdit, QTabWidget,
@@ -12,7 +14,7 @@ class DroneStudio(QMainWindow):
         self.setWindowTitle("Drone Dev Studio v1.2")
         self.resize(1200, 800)
 
-        # 1. TOP TOOLBAR (New Feature)
+        # 1. TOP TOOLBAR
         self.create_toolbar()
 
         # 2. CENTRAL WORKSPACE
@@ -21,17 +23,48 @@ class DroneStudio(QMainWindow):
         self.central_tabs.tabCloseRequested.connect(self.close_tab)
         self.setCentralWidget(self.central_tabs)
         
+        # Tab 1: Default Welcome / Editor
         self.editor_tab = QTextEdit("// Select a file to edit...")
         self.central_tabs.addTab(self.editor_tab, "Welcome")
+
+        # Tab 2: The New 3D Visualizer (THIS IS NEW)
+        self.sim_tab = DroneVisualizer()
+        # We disable the 'close' button on the Sim tab so you don't accidentally kill it
+        self.central_tabs.addTab(self.sim_tab, "3D Simulation")
+        # Optional: Hide the close button specifically for the Sim tab (index 1)
+        # self.central_tabs.tabBar().setTabButton(1, QTabBar.ButtonPosition.RightSide, None)
 
         # 3. PANELS
         self.create_log_panel()
         self.create_project_tree()
         self.create_hardware_panel()
 
+    def start_flight_sim(self):
+        try:
+            # Scrape current hardware settings from your table
+            data = {
+                'kv': int(self.prop_table.item(0, 1).text()),
+                'cells': int(self.prop_table.item(1, 1).text().upper().replace("S","")),
+                'diam': float(self.prop_table.item(2, 1).text()),
+                'pitch': float(self.prop_table.item(3, 1).text()),
+                'weight': float(self.prop_table.item(5, 1).text())
+            }
+            
+            # Switch to the simulation tab and start the loop
+            self.central_tabs.setCurrentWidget(self.sim_tab)
+            self.sim_tab.start_sim(data)
+            self.log_output.append("🚀 Flight Simulator Active. Use UP/DOWN arrows to control throttle.")
+            
+        except Exception as e:
+            self.log_output.append(f"❌ Sim Error: Ensure all specs are valid numbers. ({e})") 
+
+
+
     def create_toolbar(self):
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
+
+
 
         # Action: Open File
         open_action = QAction("Open File", self)
@@ -52,6 +85,10 @@ class DroneStudio(QMainWindow):
         folder_action.setStatusTip("Change the root directory of the project tree")
         folder_action.triggered.connect(self.change_project_folder)
         toolbar.addAction(folder_action)
+
+        run_action = QAction("Run Simulation", self)
+        run_action.triggered.connect(self.start_flight_sim)
+        toolbar.addAction(run_action)
 
     def create_project_tree(self):
         dock = QDockWidget("Project Files", self)
@@ -134,30 +171,32 @@ class DroneStudio(QMainWindow):
         container = QWidget()
         layout = QVBoxLayout(container)
 
-        # 3 Columns now: Parameter | Value | Unit
-        self.prop_table = QTableWidget(4, 3) 
+        # Increased rows to 6 to accommodate new data
+        self.prop_table = QTableWidget(6, 3) 
         self.prop_table.setHorizontalHeaderLabels(["Parameter", "Value", "Unit"])
         
-        # Define Data: (Name, Default Value, Unit)
+        # Updated Data List with Prop Specs
         data = [
             ("Motor KV", "2400", "KV"),
+            ("Battery Cells", "4", "S"),      # Changed default to 4S (common for beginners)
+            ("Prop Diameter", "5", "inch"),   # NEW
+            ("Prop Pitch", "4.5", "inch"),    # NEW
             ("Max Current", "45", "A"),
-            ("Battery Cells", "6", "S"),
             ("Frame Weight", "650", "g")
         ]
 
         for row, (name, val, unit) in enumerate(data):
-            # Column 0: Parameter Name (Read-Only)
+            # Column 0: Parameter Name (Locked)
             item_name = QTableWidgetItem(name)
-            item_name.setFlags(item_name.flags() ^ Qt.ItemFlag.ItemIsEditable) # Remove edit flag
+            item_name.setFlags(item_name.flags() ^ Qt.ItemFlag.ItemIsEditable)
             self.prop_table.setItem(row, 0, item_name)
 
             # Column 1: Value (Editable)
             self.prop_table.setItem(row, 1, QTableWidgetItem(val))
 
-            # Column 2: Unit (Read-Only)
+            # Column 2: Unit (Locked)
             item_unit = QTableWidgetItem(unit)
-            item_unit.setFlags(item_unit.flags() ^ Qt.ItemFlag.ItemIsEditable) # Remove edit flag
+            item_unit.setFlags(item_unit.flags() ^ Qt.ItemFlag.ItemIsEditable)
             self.prop_table.setItem(row, 2, item_unit)
 
         self.prop_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -173,8 +212,43 @@ class DroneStudio(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
     
     def sync_data(self):
-        self.log_output.append("📡 Syncing parameters...")
+        self.log_output.append("--- 📡 SYNC INITIATED ---")
+        
+        try:
+            # 1. READ DATA by Row Index
+            # Row 0: KV | Row 1: Cells | Row 2: Diam | Row 3: Pitch | Row 5: Weight
+            raw_kv = self.prop_table.item(0, 1).text()
+            raw_cells = self.prop_table.item(1, 1).text()
+            raw_diam = self.prop_table.item(2, 1).text()
+            raw_pitch = self.prop_table.item(3, 1).text()
+            raw_weight = self.prop_table.item(5, 1).text() # Note: Weight is now row 5
 
+            # 2. CONVERT
+            motor_kv = int(raw_kv)
+            battery_cells = int(raw_cells.upper().replace("S", ""))
+            prop_diam = float(raw_diam)
+            prop_pitch = float(raw_pitch)
+            weight_g = float(raw_weight)
+
+            # 3. RUN PHYSICS
+            engine = DronePhysics(motor_kv, battery_cells, weight_g, prop_diam, prop_pitch)
+            stats = engine.compute_flight_stats()
+
+            # 4. DISPLAY
+            self.log_output.append(f"🔋 Voltage: {stats['Voltage (V)']}V | RPM: {stats['Motor RPM']}")
+            self.log_output.append(f"💨 Propeller: {prop_diam}x{prop_pitch}")
+            self.log_output.append(f"🚀 Max Thrust: {stats['Total Thrust (g)']}g")
+            
+            if stats['TWR (Ratio)'] < 1.0:
+                self.log_output.append(f"❌ CRITICAL: TOO HEAVY (TWR {stats['TWR (Ratio)']})")
+            else:
+                self.log_output.append(f"✅ READY (TWR {stats['TWR (Ratio)']})")
+                self.log_output.append(f"   Hover Throttle: {stats['Hover Throttle (%)']}%")
+
+        except ValueError:
+            self.log_output.append("❌ Input Error: Ensure all fields are numbers.")
+        except Exception as e:
+            self.log_output.append(f"❌ System Error: {str(e)}")
     def create_log_panel(self):
         dock = QDockWidget("Telemetry & Output", self)
         self.log_output = QTextEdit()
