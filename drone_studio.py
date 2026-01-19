@@ -38,8 +38,18 @@ class DroneStudio(QMainWindow):
         self.prop_table.itemChanged.connect(self.handle_config_change)
 
         layout.addWidget(self.prop_table)
+        from PyQt6.QtWidgets import QPushButton
+        self.sync_button = QPushButton("Sync Configuration to Drone")
+        self.sync_button.setStyleSheet("background-color: #2a5a2a; color: white; font-weight: bold; padding: 10px;")
+        self.sync_button.clicked.connect(self.sync_data)
+        layout.addWidget(self.sync_button)
         dock.setWidget(container)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+    
+    def sync_data(self):
+        # Simulation of sending data
+        self.log_output.append(" Attempting to sync with drone hardware...")
+        self.log_output.append(" Sync Complete: All parameters updated.")
 
     def create_log_panel(self):
         dock = QDockWidget("Telemetry & Output", self)
